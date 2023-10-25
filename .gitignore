@@ -1,0 +1,5 @@
+.env
+data/
+embedding_model/
+.DS_Store
+__pycache__
