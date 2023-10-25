@@ -28,6 +28,8 @@ Available variables:
 
 NOTE: If using `EMBEDDING_MODEL=sentence_transformer`, uncomment code in `requirements.txt` & `chains.py`. It was commented out to reduce code size.
 
+NOTE: Make sure to set the OLLAMA_BASE_URL=http://llm:11434 in the .env file when using Ollama docker container.
+
 # Docker (Linux only)
 
 **Build only**
