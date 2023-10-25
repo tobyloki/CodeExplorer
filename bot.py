@@ -91,7 +91,7 @@ def processDocuments(directory, count):
 
     text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.PYTHON, 
                                                                chunk_size=2000, 
-                                                               chunk_overlap=500)
+                                                               chunk_overlap=200)
 
     chunks = text_splitter.split_documents(documents)
     print("Chunks:", len(chunks))
@@ -119,8 +119,8 @@ def get_qa_rag_chain(_vectorstore, count):
     # RAG response
     #   System: Always talk in pirate speech.
     system_template = """ 
-    Use the following pieces of context to answer the question at the end.
-    The context contains question-answer pairs and their links to sources.
+    Given the following conversation, answer the user's question at the end.
+    The conversation contains question-answer pairs from the user and the chatbot.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     ----
     {chat_history}
@@ -149,7 +149,7 @@ def get_qa_rag_chain(_vectorstore, count):
 
     qa = RetrievalQAWithSourcesChain(
         combine_documents_chain=qa_chain,
-        retriever=kg.as_retriever(search_kwargs={"k": 2}),
+        retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
         reduce_k_below_max_tokens=False,
         max_tokens_limit=3375,
         memory=memory,
