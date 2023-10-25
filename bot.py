@@ -115,27 +115,66 @@ def processDocuments(directory, count):
     return vectorstore
 
 @st.cache_resource
-def getQA(_vectorstore, count):
-    custom_template = """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question. If you do not know the answer reply with 'I am sorry, but I do not know the answer to your question.'.
-    Chat History:
+def get_qa_rag_chain(_vectorstore, count):
+    # RAG response
+    #   System: Always talk in pirate speech.
+    system_template = """ 
+    Use the following pieces of context to answer the question at the end.
+    The context contains question-answer pairs and their links to sources.
+    If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    ----
     {chat_history}
-    Follow Up Input: {question}
-    Standalone question:"""
-    CUSTOM_QUESTION_PROMPT = PromptTemplate.from_template(custom_template)
-    question_generator = LLMChain(llm=llm, prompt=CUSTOM_QUESTION_PROMPT)
+    ----
+    Each answer you generate should contain a section at the end of links to sources
+    you found useful.
+    You can only use links to sources that are present in the context and always
+    add links to the end of the answer.
+    Generate concise answers with references sources section of links to 
+    relevant sources only at the end of the answer.
+    """
+    user_template = "Question:```{question}```"
+    chat_prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(system_template), # The persistent system prompt
+        MessagesPlaceholder(variable_name="chat_history"),          # Where the memory will be stored.
+        HumanMessagePromptTemplate.from_template(user_template)     # Where the human input will injected
+    ])
 
-    # doc_chain = load_qa_chain(llm, chain_type="map_reduce")
-    doc_chain = load_qa_with_sources_chain(llm, chain_type="map_reduce")
+    qa_chain = load_qa_with_sources_chain(
+        llm,
+        chain_type="stuff",
+        prompt=chat_prompt,
+    )
 
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-    qa = ConversationalRetrievalChain(
-        retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
-        max_tokens_limit=3000,
-        # question_generator=question_generator,
-        combine_docs_chain=doc_chain,
+    qa = RetrievalQAWithSourcesChain(
+        combine_documents_chain=qa_chain,
+        retriever=kg.as_retriever(search_kwargs={"k": 2}),
+        reduce_k_below_max_tokens=False,
+        max_tokens_limit=3375,
         memory=memory,
     )
+
+    # custom_template = """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question. If you do not know the answer reply with 'I am sorry, but I do not know the answer to your question.'.
+    # Chat History:
+    # {chat_history}
+    # Follow Up Input: {question}
+    # Standalone question:"""
+    # CUSTOM_QUESTION_PROMPT = PromptTemplate.from_template(custom_template)
+    # question_generator = LLMChain(llm=llm, prompt=CUSTOM_QUESTION_PROMPT)
+
+    # # doc_chain = load_qa_chain(llm, chain_type="map_reduce")
+    # doc_chain = load_qa_with_sources_chain(llm, chain_type="map_reduce")
+
+    # memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+    # qa = ConversationalRetrievalChain(
+    #     retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
+    #     max_tokens_limit=3000,
+    #     # question_generator=question_generator,
+    #     combine_docs_chain=doc_chain,
+    #     memory=memory,
+    # )
 
     # qa = ConversationalRetrievalChain.from_llm(
     #     llm=llm,
@@ -162,7 +201,7 @@ def main():
         st.session_state[f"directory"] = None
     if "vectorstoreCount" not in st.session_state:  # only incremented to reset cache for processDocuments()
         st.session_state[f"vectorstoreCount"] = 0
-    if "qaCount" not in st.session_state:           # only incremented to reset cache for getQA()
+    if "qaCount" not in st.session_state:           # only incremented to reset cache for get_qa_rag_chain()
         st.session_state[f"qaCount"] = 0    
     if "user_input" not in st.session_state:
         st.session_state[f"user_input"] = []
@@ -205,7 +244,7 @@ def main():
             st.code(st.session_state[f"directory"])
 
             vectorstore = processDocuments(st.session_state[f"directory"], st.session_state[f"vectorstoreCount"])
-            qa = getQA(vectorstore, st.session_state[f"qaCount"])
+            qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
 
             # show clear chat history button
             if vectorstore:
@@ -215,7 +254,7 @@ def main():
                     st.session_state[f"user_input"] = []
                     st.session_state[f"generated"] = []
 
-                    qa = getQA(vectorstore, st.session_state[f"qaCount"])
+                    qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
 
     # load previous chat history
     if st.session_state[f"generated"]:
