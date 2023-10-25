@@ -13,7 +13,6 @@ services:
         #                   capabilities: [gpu]
 
     pull-model:
-        image: genai-stack/pull-model:latest
         build:
             dockerfile: pull_model.Dockerfile
         environment:

@@ -78,7 +78,7 @@ class StreamHandler(BaseCallbackHandler):
 
 @st.cache_resource
 def processDocuments(directory, count):
-    print("File chunking begins...")
+    print("File chunking begins...", directory)
 
     loader = GenericLoader.from_filesystem(
         path=directory,
@@ -91,9 +91,8 @@ def processDocuments(directory, count):
 
     text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.PYTHON, 
                                                                chunk_size=2000, 
-                                                               chunk_overlap=200)
+                                                               chunk_overlap=500)
 
-    # chunks = text_splitter.split_text(text=text)
     chunks = text_splitter.split_documents(documents)
     print("Chunks:", len(chunks))
 
@@ -110,9 +109,6 @@ def processDocuments(directory, count):
         node_label=f"node_{hashStr}",
         pre_delete_collection=True,  # Delete existing data
     )
-    # qa = RetrievalQA.from_chain_type(
-    #     llm=llm, chain_type="stuff", retriever=vectorstore.as_retriever()
-    # )
 
     print("Files are now chunked up")
 
@@ -126,18 +122,17 @@ def getQA(_vectorstore, count):
     Follow Up Input: {question}
     Standalone question:"""
     CUSTOM_QUESTION_PROMPT = PromptTemplate.from_template(custom_template)
-
     question_generator = LLMChain(llm=llm, prompt=CUSTOM_QUESTION_PROMPT)
-    doc_chain = load_qa_chain(llm, chain_type="map_reduce")
-    # NOTE: sources chain doesn't answer well to question
-    # doc_chain = load_qa_with_sources_chain(llm, chain_type="map_reduce")
+
+    # doc_chain = load_qa_chain(llm, chain_type="map_reduce")
+    doc_chain = load_qa_with_sources_chain(llm, chain_type="map_reduce")
 
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
     qa = ConversationalRetrievalChain(
         retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
-        max_tokens_limit=3375,
-        question_generator=question_generator,
+        max_tokens_limit=3000,
+        # question_generator=question_generator,
         combine_docs_chain=doc_chain,
         memory=memory,
     )

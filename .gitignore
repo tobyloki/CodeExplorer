@@ -3,3 +3,5 @@ data/
 embedding_model/
 .DS_Store
 __pycache__
+.venv
+test
