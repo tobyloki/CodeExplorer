@@ -2,6 +2,8 @@
 
 This app allows you to ask questions and get answers regarding your code provided the folder location of your code. It is a RAG LLM chain. The app was based on the GenAI stack from https://github.com/docker/genai-stack.
 
+![App](./images/app.png)
+
 # Configure
 
 Create a `.env` file from the environment template file `.example.env`
@@ -59,6 +61,6 @@ docker compose --profile linux down
 
 # Application
 
-Access the app at http://localhost:8501. In the sidebar, enter the path to your code folder and click "Process files". Then start asking questions about your code in the main chat.
+Access the app at http://localhost:8501. In the sidebar, enter the path to your code folder and click "Process files". Then start asking questions about your code in the main chat. The detailed mode toggle switches between asking the QA agent only (detailedMode=true) and asking an agent which uses the QA agent as a tool (detailedMode=false). In testing, the agent appears to summarize rather than giving a technical response as opposed to the QA agent only.
 
-The database can be explored at http://localhost:7474.
+The Neo4j vector database can be explored at http://localhost:7474.
