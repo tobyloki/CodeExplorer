@@ -9,6 +9,7 @@ from chains import (
     load_embedding_model,
     load_llm,
     configure_llm_only_chain,
+    get_qa_rag_chain
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores.neo4j_vector import Neo4jVector
@@ -16,7 +17,7 @@ from langchain.text_splitter import Language
 from langchain.document_loaders.generic import GenericLoader
 from langchain.document_loaders.parsers import LanguageParser
 from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferMemory, ConversationBufferWindowMemory
 from langchain.prompts.prompt import PromptTemplate
 from langchain.chains.conversational_retrieval.prompts import CONDENSE_QUESTION_PROMPT
 from langchain.chains import LLMChain
@@ -30,6 +31,20 @@ from langchain.prompts.chat import (
 from langchain.chains.qa_with_sources import load_qa_with_sources_chain
 from langchain.chains import RetrievalQAWithSourcesChain
 from langchain.memory import ConversationSummaryBufferMemory
+from langchain.agents import Tool
+from langchain.agents import initialize_agent
+from langchain.agents import AgentType
+from langchain.agents import Tool, AgentExecutor, LLMSingleActionAgent, AgentOutputParser
+from typing import List, Union
+from langchain.schema import AgentAction, AgentFinish, HumanMessage
+import re
+from langchain.agents.conversational_chat.prompt import FORMAT_INSTRUCTIONS
+from langchain.prompts import BaseChatPromptTemplate
+from langchain.agents import load_tools
+from langchain.chains import LLMMathChain
+from langchain.utilities import SerpAPIWrapper
+from agent import get_agent_executor
+from db import process_documents
 
 # set page title
 st.set_page_config(
@@ -56,22 +71,33 @@ os.environ["NEO4J_URL"] = url
 logger = get_logger(__name__)
 
 @st.cache_resource
-def initDB():
-    embeddings, dimension = load_embedding_model(
-        embedding_model_name, config={"ollama_base_url": ollama_base_url}, logger=logger
-    )
-
-    return embeddings
-
-@st.cache_resource
 def initLLM():
     # create llm
     llm = load_llm(llm_name, logger=logger, config={"ollama_base_url": ollama_base_url})
 
     return llm
 
-embeddings = initDB()
 llm = initLLM()
+
+@st.cache_resource
+def get_llm_chain():
+    chain = configure_llm_only_chain(llm)
+    return chain
+
+@st.cache_resource
+def process_directory(language, directory, count) -> (str, Neo4jVector):
+    error, vectorstore = process_documents(language, directory)
+    return (error, vectorstore)
+
+@st.cache_resource
+def get_qa_chain(_vectorstore, count):
+    qa = get_qa_rag_chain(_vectorstore, llm)
+    return qa
+
+@st.cache_resource
+def get_agent(_qa, count):
+    qa = get_agent_executor(_qa, llm)
+    return qa
 
 class StreamHandler(BaseCallbackHandler):
     def __init__(self, container, initial_text=""):
@@ -85,156 +111,17 @@ class StreamHandler(BaseCallbackHandler):
         self.text += token
         self.container.markdown(self.text)
 
-@st.cache_resource
-def processDocuments(language, directory, count) -> (str, Neo4jVector):
-    print("File chunking begins...", language, directory)
-    
-    # Create a dictionary mapping languages to file extensions
-    language_suffix_mapping = {
-        Language.CPP: ".cpp",
-        Language.GO: ".go",
-        Language.JAVA: ".java",
-        Language.KOTLIN: ".kt",
-        Language.JS: ".js",
-        Language.TS: ".ts",
-        Language.PHP: ".php",
-        Language.PROTO: ".proto",
-        Language.PYTHON: ".py",
-        Language.RST: ".rst",
-        Language.RUBY: ".rb",
-        Language.RUST: ".rs",
-        Language.SCALA: ".scala",
-        Language.SWIFT: ".swift",
-        Language.MARKDOWN: ".md",
-        Language.LATEX: ".tex",
-        Language.HTML: ".html",
-        Language.SOL: ".sol",
-        Language.CSHARP: ".cs",
-    }
-    # Get the corresponding suffix based on the selected language
-    suffix = language_suffix_mapping.get(language, "")
-    print("language file extension:", suffix)
-
-    loader = GenericLoader.from_filesystem(
-        path=directory,
-        glob="**/*",
-        suffixes=[suffix],
-        parser=LanguageParser(language=language, parser_threshold=500)
-    )
-    documents = loader.load()
-    print("Total documents:", len(documents))
-    if len(documents) == 0:
-        return ("0 documents found", None)
-
-    text_splitter = RecursiveCharacterTextSplitter.from_language(language=language, 
-                                                               chunk_size=5000, 
-                                                               chunk_overlap=500)
-
-    chunks = text_splitter.split_documents(documents)
-    print("Chunks:", len(chunks))
-
-    hashStr = str(abs(hash(directory)))
-
-    # Store the chunks part in db (vector)
-    vectorstore = Neo4jVector.from_documents(
-        chunks,
-        url=url,
-        username=username,
-        password=password,
-        embedding=embeddings,
-        index_name=f"index_{hashStr}",
-        node_label=f"node_{hashStr}",
-        pre_delete_collection=True,  # Delete existing data
-    )
-
-    print("Files are now chunked up")
-
-    return (None, vectorstore)
-
-@st.cache_resource
-def get_qa_rag_chain(_vectorstore, count):
-    # RAG response
-    #   System: Always talk in pirate speech.
-    system_template = """ 
-    Begin the answer with the text 'Answer:'.
-    Use the following pieces of context to answer the question at the end.
-    The context contains code source files which can be used to answer the question as well as be used as references.
-    If you don't know the answer, just say that you don't know, don't try to make up an answer.
-    ----
-    {summaries}
-    ----
-    Generate concise answers with references to code source files at the end of every answer.
-    """
-    user_template = "Question:```{question}```"
-    chat_prompt = ChatPromptTemplate.from_messages([
-        SystemMessagePromptTemplate.from_template(system_template), # The persistent system prompt
-        HumanMessagePromptTemplate.from_template(user_template),    # Where the human input will injected
-        MessagesPlaceholder(variable_name="chat_history"),          # Where the memory will be stored.
-    ])
-
-    qa_chain = load_qa_with_sources_chain(
-        llm,
-        chain_type="stuff",
-        prompt=chat_prompt,
-    )
-
-    memory = ConversationBufferMemory(llm=llm, memory_key="chat_history", return_messages=True, input_key='question', output_key='answer')
-
-    # NOTE: RetrievalQAWithSourcesChain gives better answer, but doesn't seem to return any code sources probably due to the way the vectorstore stored the code files
-    qa = RetrievalQAWithSourcesChain(
-        combine_documents_chain=qa_chain,
-        retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
-        reduce_k_below_max_tokens=False,
-        max_tokens_limit=3375,
-        memory=memory,
-    )
-
-    # custom_template = """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question. If you do not know the answer reply with 'I am sorry, but I do not know the answer to your question.'.
-    # Chat History:
-    # {chat_history}
-    # Follow Up Input: {question}
-    # Standalone question:"""
-    # CUSTOM_QUESTION_PROMPT = PromptTemplate.from_template(custom_template)
-    # question_generator = LLMChain(llm=llm, prompt=CUSTOM_QUESTION_PROMPT)
-
-    # # doc_chain = load_qa_chain(llm, chain_type="map_reduce")
-    # doc_chain = load_qa_with_sources_chain(llm, chain_type="map_reduce")
-
-    # memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
-    # qa = ConversationalRetrievalChain(
-    #     retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
-    #     max_tokens_limit=3000,
-    #     # question_generator=question_generator,
-    #     combine_docs_chain=doc_chain,
-    #     memory=memory,
-    # )
-
-    # qa = ConversationalRetrievalChain.from_llm(
-    #     llm=llm,
-    #     retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
-    #     max_tokens_limit=3000,
-    #     condense_question_prompt=CUSTOM_QUESTION_PROMPT,
-    #     condense_question_llm=llm,
-    #     memory=memory,
-    # )
-
-    return qa
-
-@st.cache_resource
-def getLLMChain():
-    chain = configure_llm_only_chain(llm)
-
-    return chain
-
 def main():
     qa = None
-    llm_chain = getLLMChain()
+    agent = None
+    llm_chain = get_llm_chain()
 
     if "language" not in st.session_state:
         st.session_state[f"language"] = None
     if "directory" not in st.session_state:
         st.session_state[f"directory"] = None
+    if "detailedMode" not in st.session_state:
+        st.session_state[f"detailedMode"] = True
     if "vectorstoreCount" not in st.session_state:  # only incremented to reset cache for processDocuments()
         st.session_state[f"vectorstoreCount"] = 0
     if "qaCount" not in st.session_state:           # only incremented to reset cache for get_qa_rag_chain()
@@ -288,12 +175,13 @@ def main():
         if st.session_state[f"directory"]:
             st.code(st.session_state[f"directory"])
 
-            error, vectorstore = processDocuments(st.session_state[f"language"], st.session_state[f"directory"], st.session_state[f"vectorstoreCount"])
+            error, vectorstore = process_directory(st.session_state[f"language"], st.session_state[f"directory"], st.session_state[f"vectorstoreCount"])
 
             if error:
                 st.error(error)
             elif vectorstore:
-                qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
+                qa = get_qa_chain(vectorstore, st.session_state[f"qaCount"])
+                agent = get_agent(qa, st.session_state[f"qaCount"])
 
                 # show clear chat history button
                 clearMemoryClicked = st.button("🧹 Reset chat history")
@@ -303,6 +191,11 @@ def main():
                     st.session_state[f"generated"] = []
 
                     qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
+                    agent = get_agent(qa, st.session_state[f"qaCount"])
+
+                # show toggle to switch between qa and agent mode
+                detailedMode = st.toggle('Detailed mode', value=True)
+                st.session_state[f"detailedMode"] = detailedMode
 
     # load previous chat history
     if st.session_state[f"generated"]:
@@ -324,13 +217,22 @@ def main():
             with st.spinner("Generating..."):
                 stream_handler = StreamHandler(st.empty())
                 if qa:
-                    print("Using QA")
-                    result = qa(
-                        {"question": user_input},
-                        callbacks=[stream_handler]
-                    )
+                    if st.session_state[f"detailedMode"]:
+                        print("Using QA")
+                        result = qa(
+                            {"question": user_input},
+                            callbacks=[stream_handler]
+                        )
+                        answer = result["answer"]
+                    else:
+                        print("Using Agent")
+                        result = agent(
+                            {"input": user_input},
+                            callbacks=[stream_handler]
+                        )
+                        answer = result["output"]
+
                     # print("result:", result)
-                    answer = result["answer"]
                 else:
                     print("Using LLM only")
                     answer = llm_chain(

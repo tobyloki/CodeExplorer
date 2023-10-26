@@ -17,9 +17,7 @@ RUN mkdir -p ~/.streamlit/
 RUN echo "[general]"  > ~/.streamlit/credentials.toml
 RUN echo "email = \"\""  >> ~/.streamlit/credentials.toml
 
-COPY bot.py .
-COPY utils.py .
-COPY chains.py .
+COPY *.py .
 
 EXPOSE 8501
 

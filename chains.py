@@ -103,3 +103,35 @@ def configure_llm_only_chain(llm):
         return answer
 
     return generate_llm_output
+
+
+def get_qa_rag_chain(_vectorstore, llm):
+    # Create qa RAG chain
+    system_template = """ 
+    Use the following pieces of context to answer the question at the end.
+    The context contains code source files which can be used to answer the question as well as be used as references.
+    If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    ----
+    {summaries}
+    ----
+    Generate concise answers with references to code source files at the end of every answer.
+    """
+    user_template = "Question:```{question}```"
+    chat_prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(system_template), # The persistent system prompt
+        HumanMessagePromptTemplate.from_template(user_template),    # Where the human input will injected
+    ])
+    qa_chain = load_qa_with_sources_chain(
+        llm,
+        chain_type="stuff",
+        prompt=chat_prompt,
+    )
+    qa = RetrievalQAWithSourcesChain(
+        combine_documents_chain=qa_chain,
+        retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
+        reduce_k_below_max_tokens=False,
+        max_tokens_limit=3375,
+        return_source_documents=True
+    )
+
+    return qa
