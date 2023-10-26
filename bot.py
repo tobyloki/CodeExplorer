@@ -21,6 +21,15 @@ from langchain.prompts.prompt import PromptTemplate
 from langchain.chains.conversational_retrieval.prompts import CONDENSE_QUESTION_PROMPT
 from langchain.chains import LLMChain
 from langchain.chains.question_answering import load_qa_chain
+from langchain.prompts.chat import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder
+)
+from langchain.chains.qa_with_sources import load_qa_with_sources_chain
+from langchain.chains import RetrievalQAWithSourcesChain
+from langchain.memory import ConversationSummaryBufferMemory
 
 # set page title
 st.set_page_config(
@@ -70,9 +79,9 @@ class StreamHandler(BaseCallbackHandler):
         self.text = initial_text
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if token.endswith('?'):
-            token += '\n\n\n'
-        token = token.replace('"', '')
+        # if token.endswith('?'):
+        #     token += '\n\n\n'
+        # token = token.replace('"', '')
         self.text += token
         self.container.markdown(self.text)
 
@@ -90,8 +99,8 @@ def processDocuments(directory, count):
     print("Total documents:", len(documents))
 
     text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.PYTHON, 
-                                                               chunk_size=2000, 
-                                                               chunk_overlap=200)
+                                                               chunk_size=5000, 
+                                                               chunk_overlap=500)
 
     chunks = text_splitter.split_documents(documents)
     print("Chunks:", len(chunks))
@@ -119,24 +128,20 @@ def get_qa_rag_chain(_vectorstore, count):
     # RAG response
     #   System: Always talk in pirate speech.
     system_template = """ 
-    Given the following conversation, answer the user's question at the end.
-    The conversation contains question-answer pairs from the user and the chatbot.
+    Begin the answer with the text 'Answer:'.
+    Use the following pieces of context to answer the question at the end.
+    The context contains code source files which can be used to answer the question as well as be used as references.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     ----
-    {chat_history}
+    {summaries}
     ----
-    Each answer you generate should contain a section at the end of links to sources
-    you found useful.
-    You can only use links to sources that are present in the context and always
-    add links to the end of the answer.
-    Generate concise answers with references sources section of links to 
-    relevant sources only at the end of the answer.
+    Generate concise answers with references to code source files at the end of every answer.
     """
     user_template = "Question:```{question}```"
     chat_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_template), # The persistent system prompt
+        HumanMessagePromptTemplate.from_template(user_template),    # Where the human input will injected
         MessagesPlaceholder(variable_name="chat_history"),          # Where the memory will be stored.
-        HumanMessagePromptTemplate.from_template(user_template)     # Where the human input will injected
     ])
 
     qa_chain = load_qa_with_sources_chain(
@@ -145,8 +150,9 @@ def get_qa_rag_chain(_vectorstore, count):
         prompt=chat_prompt,
     )
 
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    memory = ConversationBufferMemory(llm=llm, memory_key="chat_history", return_messages=True, input_key='question', output_key='answer')
 
+    # NOTE: RetrievalQAWithSourcesChain gives better answer, but doesn't seem to return any code sources probably due to the way the vectorstore stored the code files
     qa = RetrievalQAWithSourcesChain(
         combine_documents_chain=qa_chain,
         retriever=_vectorstore.as_retriever(search_kwargs={"k": 2}),
@@ -280,16 +286,18 @@ def main():
                     result = qa(
                         {"question": user_input},
                         callbacks=[stream_handler]
-                    )["answer"]
+                    )
+                    # print("result:", result)
+                    answer = result["answer"]
                 else:
                     print("Using LLM only")
-                    result = llm_chain(
+                    answer = llm_chain(
                         {"question": user_input},
                         callbacks=[stream_handler]
                     )
 
-                result = result.replace('"', '')
-                st.session_state[f"generated"].append(result)
+                # answer = answer.replace('"', '')
+                st.session_state[f"generated"].append(answer)
 
 
 if __name__ == "__main__":
