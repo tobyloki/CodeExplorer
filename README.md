@@ -1,8 +1,6 @@
 # Code Explorer
 
-This app allows you to ask questions and get answers regarding your code provided the folder location of your code. The app was based on the GenAI stack from https://github.com/docker/genai-stack.
-
-NOTE: Currently app only works for code folders that are written in Python.
+This app allows you to ask questions and get answers regarding your code provided the folder location of your code. It is a RAG LLM chain. The app was based on the GenAI stack from https://github.com/docker/genai-stack.
 
 # Configure
 

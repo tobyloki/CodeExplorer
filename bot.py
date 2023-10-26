@@ -86,19 +86,47 @@ class StreamHandler(BaseCallbackHandler):
         self.container.markdown(self.text)
 
 @st.cache_resource
-def processDocuments(directory, count):
-    print("File chunking begins...", directory)
+def processDocuments(language, directory, count) -> (str, Neo4jVector):
+    print("File chunking begins...", language, directory)
+    
+    # Create a dictionary mapping languages to file extensions
+    language_suffix_mapping = {
+        Language.CPP: ".cpp",
+        Language.GO: ".go",
+        Language.JAVA: ".java",
+        Language.KOTLIN: ".kt",
+        Language.JS: ".js",
+        Language.TS: ".ts",
+        Language.PHP: ".php",
+        Language.PROTO: ".proto",
+        Language.PYTHON: ".py",
+        Language.RST: ".rst",
+        Language.RUBY: ".rb",
+        Language.RUST: ".rs",
+        Language.SCALA: ".scala",
+        Language.SWIFT: ".swift",
+        Language.MARKDOWN: ".md",
+        Language.LATEX: ".tex",
+        Language.HTML: ".html",
+        Language.SOL: ".sol",
+        Language.CSHARP: ".cs",
+    }
+    # Get the corresponding suffix based on the selected language
+    suffix = language_suffix_mapping.get(language, "")
+    print("language file extension:", suffix)
 
     loader = GenericLoader.from_filesystem(
         path=directory,
         glob="**/*",
-        suffixes=[".py"],
-        parser=LanguageParser(language=Language.PYTHON, parser_threshold=500)
+        suffixes=[suffix],
+        parser=LanguageParser(language=language, parser_threshold=500)
     )
     documents = loader.load()
     print("Total documents:", len(documents))
+    if len(documents) == 0:
+        return ("0 documents found", None)
 
-    text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.PYTHON, 
+    text_splitter = RecursiveCharacterTextSplitter.from_language(language=language, 
                                                                chunk_size=5000, 
                                                                chunk_overlap=500)
 
@@ -121,7 +149,7 @@ def processDocuments(directory, count):
 
     print("Files are now chunked up")
 
-    return vectorstore
+    return (None, vectorstore)
 
 @st.cache_resource
 def get_qa_rag_chain(_vectorstore, count):
@@ -203,6 +231,8 @@ def main():
     qa = None
     llm_chain = getLLMChain()
 
+    if "language" not in st.session_state:
+        st.session_state[f"language"] = None
     if "directory" not in st.session_state:
         st.session_state[f"directory"] = None
     if "vectorstoreCount" not in st.session_state:  # only incremented to reset cache for processDocuments()
@@ -223,12 +253,20 @@ def main():
 
     # sidebar
     with st.sidebar:
+        # Convert enum values to a list of strings
+        languages_list = [lang.value for lang in Language]
+        default_index = languages_list.index(Language.PYTHON)
+        languageSelected = st.selectbox(
+            'Select language',
+            languages_list,
+            index=default_index
+        )
+
         # show folder picker dialog
         # st.title('Select Folder')
         # folderClicked = st.button('Folder Picker')
 
         currentPath = os.getcwd()
-
         directory = st.text_input('Enter folder path', currentPath)
         directory = directory.strip()
 
@@ -239,6 +277,7 @@ def main():
             else:
                 # directory = filedialog.askdirectory(master=root)
                 if isinstance(directory, str) and directory:
+                    st.session_state[f"language"] = languageSelected
                     st.session_state[f"directory"] = directory
                     st.session_state[f"vectorstoreCount"] += 1
                     st.session_state[f"qaCount"] += 1
@@ -249,11 +288,14 @@ def main():
         if st.session_state[f"directory"]:
             st.code(st.session_state[f"directory"])
 
-            vectorstore = processDocuments(st.session_state[f"directory"], st.session_state[f"vectorstoreCount"])
-            qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
+            error, vectorstore = processDocuments(st.session_state[f"language"], st.session_state[f"directory"], st.session_state[f"vectorstoreCount"])
 
-            # show clear chat history button
-            if vectorstore:
+            if error:
+                st.error(error)
+            elif vectorstore:
+                qa = get_qa_rag_chain(vectorstore, st.session_state[f"qaCount"])
+
+                # show clear chat history button
                 clearMemoryClicked = st.button("🧹 Reset chat history")
                 if clearMemoryClicked:
                     st.session_state[f"qaCount"] += 1
