@@ -75,7 +75,7 @@ def process_documents(language, directory) -> (str, Neo4jVector):
     chunks = text_splitter.split_documents(documents)
     print("Chunks:", len(chunks))
 
-    hashStr = str(abs(hash(directory)))
+    hashStr = "myHash" # str(abs(hash(directory)))
 
     # Store the chunks part in db (vector)
     vectorstore = Neo4jVector.from_documents(
